@@ -4,7 +4,7 @@ project(FluxArc VERSION 0.1.0)
 include(CTest)
 enable_testing()
 
-option(FLUXARC_BUILD_DEMO "Whether or not to build the test/demo" ON)
+option(FLUXARC_BUILD_DEMO "Whether or not to build the test/demo" OFF)
 
 add_library(FluxArc STATIC Src/FluxArc.cc Include/FluxArc/FluxArc.hh)
 target_include_directories(FluxArc PUBLIC Include)
@@ -15,9 +15,6 @@ add_library(lz4 STATIC ThirdParty/lz4/lib/lz4.c ThirdParty/lz4/lib/lz4hc.c)
 target_include_directories(lz4 PUBLIC ThirdParty/lz4/lib)
 target_link_libraries(FluxArc PUBLIC lz4)
 
-set(CPACK_PROJECT_NAME ${PROJECT_NAME})
-set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
-include(CPack)
 
 # Tests
 if (FLUXARC_BUILD_DEMO)

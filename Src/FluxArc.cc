@@ -6,6 +6,7 @@
 #include <ios>
 #include <cstring>
 #include <exception>
+#include <iostream>
 #include <stdexcept>
 
 using namespace FluxArc;
@@ -47,7 +48,11 @@ Archive::Archive(const std::string& filename)
     }
 
     // Get header
-    wf.read((char *)&memblock, sizeof(Header));
+    // wf.read((char *)&memblock, sizeof(Header));
+    wf.read((char*)&memblock.magic_number, sizeof(std::uint16_t));
+    wf.read((char*)&memblock.version, sizeof(std::uint16_t));
+    wf.read((char*)&memblock.file_size, sizeof(std::uint64_t));
+    wf.read((char*)&memblock.file_quantity, sizeof(std::uint32_t));
 
     if (memblock.file_size != size)
     {
@@ -69,7 +74,12 @@ Archive::Archive(const std::string& filename)
     for (int i = 0; i < memblock.file_quantity; i++)
     {
         FileHeader file;
-        wf.read((char *)&file, sizeof(FileHeader));
+        // wf.read((char *)&file, sizeof(FileHeader));
+        wf.read((char*)&file.name_size, sizeof(std::uint32_t));
+        wf.read((char*)&file.compressed, sizeof(bool));
+        wf.read((char*)&file.position, sizeof(uint64_t));
+        wf.read((char*)&file.file_size_uc, sizeof(uint32_t));
+        wf.read((char*)&file.file_size_c, sizeof(uint32_t));
 
         // Read name
         char* name = new char[file.name_size];
@@ -137,7 +147,7 @@ char* compress(char* data, size_t size, int* out_size, bool release)
     }
 
     int size_var = out;
-    std::memcpy(out_size, &size_var, sizeof(out));
+    std::memcpy(out_size, &size_var, sizeof(int));
 
     // delete[] data;
 
@@ -242,14 +252,14 @@ void Archive::rebuild()
 void Archive::rebuild(const std::string& fname, char* data, int size, bool compressed, bool compress_release, bool new_file)
 {
     // Calculate file size
-    int total_size = sizeof(Header);
-    int header_size = sizeof(Header);
+    int total_size = sizeof(uint16_t) * 2 + sizeof(uint64_t) + sizeof(uint32_t);
+    int header_size = sizeof(uint16_t) * 2 + sizeof(uint64_t) + sizeof(uint32_t);
     for (auto it : database)
     {
         total_size += it.first.size();
-        total_size += sizeof(FileHeader);
+        total_size += sizeof(uint32_t) * 3 + sizeof(uint64_t) + sizeof(bool);
         header_size += it.first.size();
-        header_size += sizeof(FileHeader);
+        header_size += sizeof(uint32_t) * 3 + sizeof(uint64_t) + sizeof(bool);
 
         total_size += it.second.file_size_c;
     }
@@ -261,9 +271,9 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
         fh.name_size = fname.size();
         fh.compressed = compressed;
         total_size += fname.size();
-        total_size += sizeof(FileHeader);
+        total_size += sizeof(uint32_t) * 3 + sizeof(uint64_t) + sizeof(bool);
         header_size += fname.size();
-        header_size += sizeof(FileHeader);
+        header_size += sizeof(uint32_t) * 3 + sizeof(uint64_t) + sizeof(bool);
 
         if (compressed)
         {
@@ -281,7 +291,7 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
 
     // Build old content first
     long long position = header_size;
-    auto new_headers = database;
+    std::map<std::string, FileHeader> new_headers;
     for (auto it : database)
     {
         char* file_buffer = new char[it.second.file_size_c];
@@ -292,19 +302,30 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
             throw std::invalid_argument("bad :(");
         }
 
-        new_headers[it.first].position = position;
+        auto new_header = it.second;
+        new_header.position = position;
+
+        // Make sure to copy string
+        new_headers.emplace(std::string(it.first), new_header);
+
+        if (position + it.second.file_size_c > total_size)
+        {
+            std::cerr << "Error: Sizes broke\n";
+        }
 
         memcpy(buffer + position, file_buffer, it.second.file_size_c);
 
         position += it.second.file_size_c;
 
         delete[] file_buffer;
+        file_buffer = nullptr;
     }
 
     database = new_headers;
 
     if (new_file)
     {
+        if (position != total_size - fh.file_size_c) std::cerr << "Error: File sizes broken" << std::endl;
         // Build new content
         fh.position = position;
         memcpy(buffer + position, data, fh.file_size_c);
@@ -323,20 +344,40 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
 
     header = h;
 
-    memcpy(buffer, &h, sizeof(Header));
-    position += sizeof(Header);
+    memcpy(buffer + position, &h.magic_number, sizeof(uint16_t));
+    position += sizeof(uint16_t);
+    memcpy(buffer + position, &h.version, sizeof(uint16_t));
+    position += sizeof(uint16_t);
+    memcpy(buffer + position, &h.file_size, sizeof(uint64_t));
+    position += sizeof(uint64_t);
+    memcpy(buffer + position, &h.file_quantity, sizeof(uint32_t));
+    position += sizeof(uint32_t);
+
+    // position += header_size;
 
     // File headers
     for (auto it: database)
     {
         // Write header
-        memcpy(buffer + position, &it.second, sizeof(FileHeader));
-        position += sizeof(FileHeader);
+        // memcpy(buffer + position, &it.second, sizeof(FileHeader));
+        // position += sizeof(FileHeader);
+        memcpy(buffer + position, &it.second.name_size, sizeof(std::uint32_t));
+        position += sizeof(uint32_t);
+        memcpy(buffer + position, &it.second.compressed, sizeof(bool));
+        position += sizeof(bool);
+        memcpy(buffer + position, &it.second.position, sizeof(uint64_t));
+        position += sizeof(uint64_t);
+        memcpy(buffer + position, &it.second.file_size_uc, sizeof(uint32_t));
+        position += sizeof(uint32_t);
+        memcpy(buffer + position, &it.second.file_size_c, sizeof(uint32_t));
+        position += sizeof(uint32_t);
 
         // Write name
         memcpy(buffer + position, it.first.c_str(), it.second.name_size);
         position += it.second.name_size;
     }
+
+    if (position != header_size) std::cerr << "Error: File sizes broken" << std::endl;
 
     // Now actually write it to a file
     std::ofstream wf(archive_filename, std::ios::binary | std::ios::out);
@@ -344,12 +385,14 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
     wf.close();
 
     delete[] buffer;
+    buffer = nullptr;
 
     if (compressed)
     {
         // We only need to do it for the compressed one because
         // compress() allocates memory
         delete[] data;
+        data = nullptr;
     }
 }
 

@@ -16,20 +16,20 @@ namespace FluxArc
     /** Storage Structs */
     struct Header
     {
-        std::uint16_t magic_number;
-        std::uint16_t version;
-        std::uint64_t file_size;
+        uint16_t magic_number;
+        uint16_t version;
+        uint64_t file_size;
 
-        std::uint32_t file_quantity;
+        uint32_t file_quantity;
     };
 
     struct FileHeader
     {
-        std::uint32_t name_size;
+        uint32_t name_size;
         bool compressed;
-        std::uint64_t position;
-        std::uint32_t file_size_uc;
-        std::uint32_t file_size_c;
+        uint64_t position;
+        uint32_t file_size_uc;
+        uint32_t file_size_c;
     };
 
     /** A little helper class for creating binary files */
@@ -40,70 +40,104 @@ namespace FluxArc
         {
             index = 0;
             size = 0;
-        };
+            // std::cout << "Created binary file" << std::endl;
+        }
 
         BinaryFile(char* data, uint32_t size)
         {
             index = 0;
             this->data = data;
             this->size = size;
-        };
+
+            // std::cout << "Created binary file from data" << std::endl;
+        }
+
+        BinaryFile(const BinaryFile &f)
+        {
+            index = f.index;
+            size = f.size;
+            data = new char[size];
+            memcpy(data, f.data, size);
+        }
+
+        BinaryFile(BinaryFile&& f)
+        {
+            index = f.index;
+            size = f.size;
+            data = f.data;
+            f.data = nullptr;
+        }
 
         ~BinaryFile()
         {
-            delete[] data;
+            if (data != nullptr)
+            {
+                delete[] data;
+                data = nullptr;
+            }
+            // std::cout << "Destroyed BinaryFile" << std::endl;
         }
 
         /** Puts the given variable into the binary file */
         template <typename T> 
         void set(const T& object)
         {
-            uint32_t new_size = size + sizeof(T);
-            char* new_data = new char[new_size];
+            set((char*)&object, sizeof(T));
+        }
 
-            if (data != nullptr)
+        void set(const char* to_add_data, uint32_t to_add_size)
+        {
+            if (index + to_add_size > size)
             {
-                memcpy(new_data, data, size);
-            }
-            memcpy(new_data + index, (char *)&object, sizeof(T));
+                char* new_data = new char[index + to_add_size];
 
-            delete[] data;
-            data = new_data;
-            size = new_size;
-            index = new_size;
+                if (data != nullptr)
+                {
+                    memcpy(new_data, data, size);
+                }
+                memcpy(new_data + index, to_add_data, to_add_size);
+
+                if (data != nullptr)
+                {
+                    delete[] data;
+                }
+                data = new_data;
+                size = index + to_add_size;
+                index += to_add_size;
+            }
+            else
+            {
+                memcpy(data + index, to_add_data, to_add_size);
+                index += to_add_size;
+            }
         }
 
         void set(const std::string& object)
         {
-            uint32_t new_size = size + sizeof(uint32_t) + object.size();
-            char* new_data = new char[new_size];
+            set((uint32_t)object.size());
+            set(object.c_str(), object.size());
+        }
 
-            if (data != nullptr)
+        /** Gets an unspecified amount of data. You must free the result */
+        bool get(char* new_data, int new_size)
+        {
+            if (index + new_size > size)
             {
-                memcpy(new_data, data, size);
+                // std::cout << index + sizeof(T) << std::endl;
+                return false;
             }
-            uint32_t string_size = object.size();
-            memcpy(new_data + index, &string_size, sizeof(uint32_t));
-            memcpy(new_data + index + sizeof(uint32_t), object.c_str(), string_size);
 
-            delete[] data;
-            data = new_data;
-            size = new_size;
-            index = new_size;
+            memcpy(new_data, data + index, new_size);
+            index += new_size;
+
+            return true;
         }
 
         /** Gets a variable from the binary file. Returns true if it could be read, otherwise false */
         template <typename T>
         bool get(T* object)
         {
-            if (index + sizeof(T) > size)
-            {
-                std::cout << index + sizeof(T) << std::endl;
-                return false;
-            }
-
-            memcpy(object, data + index, sizeof(T));
-            index += sizeof(T);
+            get((char *)object, sizeof(T));
 
             return true;
         }
@@ -111,22 +145,33 @@ namespace FluxArc
         /** Gets a string */
         std::string get()
         {
-            if (index + sizeof(uint32_t) > size)
-            {
-                return std::string("BinaryFile.get() failed :(");
-            }
-
             uint32_t string_size;
-            memcpy(data + index, &string_size, sizeof(uint32_t));
+            get(&string_size);
 
             char* str = new char[string_size];
-            memcpy(str, data + index + sizeof(uint32_t), string_size);
-            index += sizeof(uint32_t) + string_size;
+            get(str, string_size);
 
             std::string output(str, string_size);
             delete[] str;
 
             return output;
+        }
+
+        /** Move the writing/reading cursor in the file to the given position. If it fails, it will return false */
+        bool setCursor(uint32_t position)
+        {
+            if (position > size)
+            {
+                return false;
+            }
+            index = position;
+            return true;
+        }
+
+        /** Returns where the writing/reading cursor is currently located */
+        int getCursor() const
+        {
+            return index;
         }
 
         char* getDataPtr() const
@@ -151,6 +196,7 @@ namespace FluxArc
     {
     public:
         Archive(const std::string& filename);
+        Archive() {};
 
         /**
         Checks if a file exists within the archive
