@@ -118,6 +118,21 @@ namespace FluxArc
             set(object.c_str(), object.size());
         }
 
+        /** Adds the given amount of bytes as headroom. The cursor stays at the same place */
+        void allocate(uint32_t add_size)
+        {
+            char* new_data = new char[size + add_size];
+            if (data != nullptr)
+            {
+                memcpy(new_data, data, size);
+                delete[] data;
+            }
+
+            data = new_data;
+
+            size += add_size;
+        }
+
         /** Gets an unspecified amount of data. You must free the result */
         bool get(char* new_data, int new_size)
         {
