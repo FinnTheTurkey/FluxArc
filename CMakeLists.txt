@@ -6,7 +6,7 @@ enable_testing()
 
 option(FLUXARC_BUILD_DEMO "Whether or not to build the test/demo" OFF)
 
-add_library(FluxArc STATIC Src/FluxArc.cc Include/FluxArc/FluxArc.hh)
+add_library(FluxArc Src/FluxArc.cc Include/FluxArc/FluxArc.hh)
 target_include_directories(FluxArc PUBLIC Include)
 
 # LZ4
