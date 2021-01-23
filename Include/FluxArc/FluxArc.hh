@@ -210,8 +210,9 @@ namespace FluxArc
     class Archive
     {
     public:
-        Archive(const std::string& filename);
-        Archive() {};
+        Archive(const std::string& filename, bool dynamic = false);
+        Archive() {dynamic = true;};
+        ~Archive();
 
         /**
         Checks if a file exists within the archive
@@ -282,6 +283,9 @@ namespace FluxArc
         Header header;
         std::map<std::string, FileHeader> database;
         std::string archive_filename;
+
+        bool dynamic;
+        std::map<std::string, char* > file_data;
     };
 }
 

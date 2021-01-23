@@ -11,8 +11,60 @@
 
 using namespace FluxArc;
 
-Archive::Archive(const std::string& filename)
+// Helper functions
+char* decompress(char* data, size_t size_c, size_t size, int* out_size)
 {
+    char* output = new char [size];
+    int out = LZ4_decompress_safe(data, output, size_c, size);
+
+    if (out < 0)
+    {
+        throw std::invalid_argument("Error: LZ4 decompression failed");
+    }
+    
+    std::memcpy(out_size, &out, sizeof(out));
+
+    delete[] data;
+    
+    return output;
+}
+
+char* compress(char* data, size_t size, int* out_size, bool release)
+{
+    
+    auto dst_size = LZ4_compressBound(size);
+
+    // One char = one byte. Remember that
+    char* output = new char [dst_size];
+
+    int out = 0;
+    if (release)
+    {
+        // MAXIMUM COMPRESSION!!!!
+        // Also maximum time, but that's not important
+        out = LZ4_compress_HC(data, output, size, dst_size, LZ4HC_CLEVEL_MAX);
+    }
+    else
+    {
+        out = LZ4_compress_default(data, output, size, dst_size);
+    }
+
+    if (out == 0)
+    {
+        throw std::invalid_argument("Error: LZ4 compression failed");
+    }
+
+    int size_var = out;
+    std::memcpy(out_size, &size_var, sizeof(int));
+
+    // delete[] data;
+
+    return output;
+}
+
+Archive::Archive(const std::string& filename, bool dynamic)
+{
+    this->dynamic = dynamic;
     std::ifstream wf(filename, std::ifstream::ate | std::ios::in | std::ios::binary);
     archive_filename = filename;
 
@@ -86,12 +138,66 @@ Archive::Archive(const std::string& filename)
         wf.read(name, file.name_size);
 
         database[std::string(name, file.name_size)] = file;
+
+        delete[] name;
     }
 
     header = memblock;
 
+    if (!dynamic)
+    {
+        // std::cout << "Allocating!\n";
+        file_data = std::map<std::string, char* >();
+
+        // Load everything we need from the file
+        for (auto i : database)
+        {
+            auto fname = i.first;
+
+            // Go to location of file
+            wf.seekg(database[fname].position, wf.beg);
+
+            // Load data into buffer
+            char* buffer = new char[database[fname].file_size_c];
+            wf.read(buffer, database[fname].file_size_c);
+
+            int fs = database[fname].file_size_c;
+
+            // Uncompress if needed
+            if (database[fname].compressed)
+            {
+                int out_size;
+                buffer = decompress(buffer, database[fname].file_size_c, database[fname].file_size_uc, &out_size);
+
+                if (out_size != database[fname].file_size_uc)
+                {
+                    throw std::invalid_argument("Error: Invalid Archive");
+                }
+
+                fs = database[fname].file_size_uc;
+            }
+
+            // Return
+            file_data[fname] = buffer;
+        }
+
+    }
+
     // And done!
     wf.close();
+}
+
+Archive::~Archive()
+{
+    if (!dynamic)
+    {
+        // std::cout << "Deallocating!\n";
+        // Deallocate stored data
+        for (auto i : file_data)
+        {
+            delete[] i.second;
+        }
+    }
 }
 
 int Archive::getFileSize(const std::string& fname)
@@ -104,61 +210,19 @@ int Archive::getFileSize(const std::string& fname)
     return database[fname].file_size_uc;
 }
 
-char* decompress(char* data, size_t size_c, size_t size, int* out_size)
-{
-    char* output = new char [size];
-    int out = LZ4_decompress_safe(data, output, size_c, size);
-
-    if (out < 0)
-    {
-        throw std::invalid_argument("Error: LZ4 decompression failed");
-    }
-    
-    std::memcpy(out_size, &out, sizeof(out));
-
-    delete[] data;
-    
-    return output;
-}
-
-char* compress(char* data, size_t size, int* out_size, bool release)
-{
-    
-    auto dst_size = LZ4_compressBound(size);
-
-    // One char = one byte. Remember that
-    char* output = new char [dst_size];
-
-    int out = 0;
-    if (release)
-    {
-        // MAXIMUM COMPRESSION!!!!
-        // Also maximum time, but that's not important
-        out = LZ4_compress_HC(data, output, size, dst_size, LZ4HC_CLEVEL_MAX);
-    }
-    else
-    {
-        out = LZ4_compress_default(data, output, size, dst_size);
-    }
-
-    if (out == 0)
-    {
-        throw std::invalid_argument("Error: LZ4 compression failed");
-    }
-
-    int size_var = out;
-    std::memcpy(out_size, &size_var, sizeof(int));
-
-    // delete[] data;
-
-    return output;
-}
-
 int Archive::getFile(const std::string& fname, char* data, bool res_compressed)
 {
     if (database.find(fname) == database.end())
     {
         throw std::invalid_argument("Error: File not in archive");
+    }
+
+    if (!dynamic)
+    {
+        int fs = database[fname].file_size_uc;
+        char* x = file_data[fname];
+        std::memcpy(data, x, fs);
+        return fs;
     }
 
     std::ifstream wf(archive_filename, std::ios::out | std::ios::binary);
