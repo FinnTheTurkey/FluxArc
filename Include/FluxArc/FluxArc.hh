@@ -214,6 +214,11 @@ namespace FluxArc
         Archive() {dynamic = true;};
         ~Archive();
 
+        // Rule of 3
+        Archive(const Archive& that);
+
+        Archive& operator=(const Archive& that);
+
         /**
         Checks if a file exists within the archive
         */

@@ -12,7 +12,7 @@
 using namespace FluxArc;
 
 // Helper functions
-char* decompress(char* data, size_t size_c, size_t size, int* out_size)
+char* decompress(char* data, size_t size_c, size_t size, int* out_size, bool free=true)
 {
     char* output = new char [size];
     int out = LZ4_decompress_safe(data, output, size_c, size);
@@ -24,7 +24,10 @@ char* decompress(char* data, size_t size_c, size_t size, int* out_size)
     
     std::memcpy(out_size, &out, sizeof(out));
 
-    delete[] data;
+    if (free)
+    {
+        delete[] data;
+    }
     
     return output;
 }
@@ -146,7 +149,7 @@ Archive::Archive(const std::string& filename, bool dynamic)
 
     if (!dynamic)
     {
-        // std::cout << "Allocating!\n";
+        std::cout << "Allocating file " << filename << "!\n";
         file_data = std::map<std::string, char* >();
 
         // Load everything we need from the file
@@ -160,22 +163,6 @@ Archive::Archive(const std::string& filename, bool dynamic)
             // Load data into buffer
             char* buffer = new char[database[fname].file_size_c];
             wf.read(buffer, database[fname].file_size_c);
-
-            int fs = database[fname].file_size_c;
-
-            // Uncompress if needed
-            if (database[fname].compressed)
-            {
-                int out_size;
-                buffer = decompress(buffer, database[fname].file_size_c, database[fname].file_size_uc, &out_size);
-
-                if (out_size != database[fname].file_size_uc)
-                {
-                    throw std::invalid_argument("Error: Invalid Archive");
-                }
-
-                fs = database[fname].file_size_uc;
-            }
 
             // Return
             file_data[fname] = buffer;
@@ -191,13 +178,75 @@ Archive::~Archive()
 {
     if (!dynamic)
     {
-        // std::cout << "Deallocating!\n";
+        std::cout << "Deallocating file " << archive_filename << "!\n";
         // Deallocate stored data
         for (auto i : file_data)
         {
             delete[] i.second;
         }
     }
+}
+
+Archive::Archive(const Archive& that)
+{
+    header = that.header;
+    database = that.database;
+    archive_filename = that.archive_filename;
+    dynamic = that.dynamic;
+
+    if (!dynamic)
+    {
+        // Copy over the file data
+        for (auto i: that.file_data)
+        {
+            auto size = database[i.first].file_size_c;
+
+            char* buffer = new char[size];
+            memcpy(buffer, that.file_data.at(i.first), size);
+
+            file_data[i.first] = buffer;
+        }
+    }
+}
+
+Archive& Archive::operator=(const Archive& that)
+{
+    if (this != &that)
+    {
+        if (!dynamic)
+        {
+            // Deallocate stuff
+            std::cout << "Assignment: Deallocating " << archive_filename << "!\n";
+
+            // Deallocate stored data
+            for (auto i : file_data)
+            {
+                delete[] i.second;
+            }
+        }
+
+        // Copy in new stuff
+        header = that.header;
+        database = that.database;
+        archive_filename = that.archive_filename;
+        dynamic = that.dynamic;
+
+        if (!dynamic)
+        {
+            // Copy over the file data
+            for (auto i: that.file_data)
+            {
+                auto size = database[i.first].file_size_c;
+
+                char* buffer = new char[size];
+                memcpy(buffer, that.file_data.at(i.first), size);
+
+                file_data[i.first] = buffer;
+            }
+        }
+    }
+
+    return *this;
 }
 
 int Archive::getFileSize(const std::string& fname)
@@ -219,8 +268,25 @@ int Archive::getFile(const std::string& fname, char* data, bool res_compressed)
 
     if (!dynamic)
     {
-        int fs = database[fname].file_size_uc;
+        int fs = database[fname].file_size_c;
         char* x = file_data[fname];
+
+        // Uncompress if needed
+        if (database[fname].compressed && !res_compressed)
+        {
+            // Remember: X is currently the one and only copy of the data
+            // So make sure not to free it!
+            int out_size;
+            x = decompress(x, database[fname].file_size_c, database[fname].file_size_uc, &out_size, false);
+
+            if (out_size != database[fname].file_size_uc)
+            {
+                throw std::invalid_argument("Error: Invalid Archive");
+            }
+
+            fs = database[fname].file_size_uc;
+        }
+
         std::memcpy(data, x, fs);
         return fs;
     }
@@ -290,6 +356,13 @@ void Archive::setFile(const std::string& fname, char* data, int size, bool compr
     {
         // Remove the old one
         database.erase(fname);
+
+        if (!dynamic)
+        {
+            // Deallocate it's resource
+            delete[] file_data[fname];
+            file_data.erase(fname);
+        }
     }
     rebuild(fname, data, size, compressed, compress_release, true);
 }
@@ -345,9 +418,25 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
             data = compress(data, size, &out_size, compress_release);
             size = out_size;
         }
+        else
+        {
+            if (!dynamic)
+            {
+                // Copy the data so we know it won't get freed
+                auto new_data = new char[size];
+                std::memcpy(new_data, data, size);
+                data = new_data;
+            }
+        }
 
         fh.file_size_c = size;
         total_size += size;
+
+        // Add to database if we're not doing it dynamically
+        if (!dynamic)
+        {
+            file_data[fname] = data;
+        }
     }
 
     // Build file
@@ -451,7 +540,7 @@ void Archive::rebuild(const std::string& fname, char* data, int size, bool compr
     delete[] buffer;
     buffer = nullptr;
 
-    if (compressed)
+    if (compressed && dynamic)
     {
         // We only need to do it for the compressed one because
         // compress() allocates memory
